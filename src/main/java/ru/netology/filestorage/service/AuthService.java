@@ -1,5 +1,7 @@
 package ru.netology.filestorage.service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -20,6 +22,7 @@ import java.util.UUID;
 @Service
 public class AuthService {
 
+    private static final Logger log = LoggerFactory.getLogger(AuthService.class);
     private final UserRepository userRepository;
     private final TokenRepository tokenRepository;
     private final UserService userService;
@@ -31,40 +34,75 @@ public class AuthService {
     }
 
     public AuthResponse login(AuthRequest request) {
+        log.debug("Попытка входа пользователя: {}", request.getLogin());
         User user = userRepository.findByUsername(request.getLogin())
-                .orElseThrow(() -> new UserNotFoundException("User not found"));
+                .orElseThrow(() -> {
+                    log.warn("Пользователь не найден: {}", request.getLogin());
+                    return new UserNotFoundException("Пользователь не найден");
+                });
 
         if (!userService.checkPassword(request.getPassword(), user.getPassword())) {
-            throw new InvalidCredentialsException("Invalid password");
+            log.warn("Неверный пароль для пользователя: {}", request.getLogin());
+            throw new InvalidCredentialsException("Неверный пароль");
         }
 
         String token = generateToken();
         Token tokenEntity = new Token(token, user, LocalDateTime.now().plusDays(1));
         tokenRepository.save(tokenEntity);
 
+        log.info("Пользователь {} успешно аутентифицирован. Токен сгенерирован.", request.getLogin());
         return new AuthResponse(token);
     }
 
     public void logout(String token) {
+        log.debug("Запрос на выход из системы для токена");
+        if (token == null) {
+            log.debug("Выход из системы вызван с нулевым токеном, игнорируя");
+            return;
+        }
+
         tokenRepository.findByTokenAndActiveTrue(token).ifPresent(tokenEntity -> {
             tokenEntity.setActive(false);
             tokenRepository.save(tokenEntity);
+            log.info("Токен недействителен для пользователя: {}", tokenEntity.getUser().getUsername());
         });
     }
 
     public boolean validateToken(String token) {
-        return tokenRepository.findByTokenAndActiveTrue(token)
-                .map(t -> t.getExpiresAt().isAfter(LocalDateTime.now()))
+        if (token == null) {
+            log.debug("Токен нулевой, проверка не пройдена");
+            return false;
+        }
+
+        boolean isValid = tokenRepository.findByTokenAndActiveTrue(token)
+                .map(t -> {
+                    boolean notExpired = t.getExpiresAt().isAfter(LocalDateTime.now());
+                    if (!notExpired) {
+                        log.debug("Срок действия токена истек: {}", token);
+                    }
+                    return notExpired;
+                })
                 .orElse(false);
+
+        log.debug("Результат проверки токена: {} для токена: {}", isValid, token);
+        return isValid;
     }
 
     public Authentication getAuthentication(String token) {
+        if (token == null) {
+            log.debug("Токен нулевой, невозможно получить аутентификацию");
+            return null;
+        }
+
         return tokenRepository.findByTokenAndActiveTrue(token)
-                .map(t -> new UsernamePasswordAuthenticationToken(
-                        t.getUser().getUsername(),
-                        null,
-                        Collections.singletonList(new SimpleGrantedAuthority("USER"))
-                ))
+                .map(t -> {
+                    log.debug("Создание аутентификации для пользователя: {}", t.getUser().getUsername());
+                    return new UsernamePasswordAuthenticationToken(
+                            t.getUser().getUsername(),
+                            null,
+                            Collections.singletonList(new SimpleGrantedAuthority("USER"))
+                    );
+                })
                 .orElse(null);
     }
 

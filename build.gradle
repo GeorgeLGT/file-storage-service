@@ -41,12 +41,18 @@ dependencies {
     testImplementation 'org.testcontainers:postgresql'
     testImplementation 'org.testcontainers:junit-jupiter'
     testImplementation 'org.springframework.boot:spring-boot-testcontainers'
-    runtimeOnly 'com.h2database:h2'
-    testImplementation 'com.h2database:h2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testRuntimeOnly 'com.h2database:h2'
+    testImplementation 'org.mockito:mockito-junit-jupiter:5.3.1'
 }
 
 tasks.named('test') {
     useJUnitPlatform()
+
+    testLogging {
+        events "passed", "skipped", "failed"
+        showStandardStreams = true
+    }
 }
 jacocoTestReport {
     dependsOn test

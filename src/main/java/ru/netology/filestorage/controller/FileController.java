@@ -1,5 +1,7 @@
 package ru.netology.filestorage.controller;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -10,16 +12,19 @@ import org.springframework.web.multipart.MultipartFile;
 import ru.netology.filestorage.dto.ErrorResponse;
 import ru.netology.filestorage.dto.FileListResponse;
 import ru.netology.filestorage.dto.RenameFileRequest;
-import ru.netology.filestorage.exception.FileNotFoundException;
+import ru.netology.filestorage.entity.File;
+import ru.netology.filestorage.exception.*;
 import ru.netology.filestorage.service.FileService;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/cloud")
 public class FileController {
 
+    private static final Logger log = LoggerFactory.getLogger(FileController.class);
     private final FileService fileService;
 
     public FileController(FileService fileService) {
@@ -30,12 +35,18 @@ public class FileController {
     public ResponseEntity<?> listFiles(
             @RequestHeader("auth-token") String token,
             @RequestParam(value = "limit", required = false) Integer limit) {
+        log.debug("Запрос списка файлов с ограничением: {}", limit);
         try {
-            List<FileListResponse> files = fileService.getUserFiles(limit);
-            return ResponseEntity.ok(files);
+            List<File> files = fileService.getUserFiles(limit);
+            List<FileListResponse> response = files.stream()
+                    .map(file -> new FileListResponse(file.getFilename(), file.getSize()))
+                    .collect(Collectors.toList());
+            log.info("Извлеченные {} файлы", files.size());
+            return ResponseEntity.ok(response);
         } catch (Exception e) {
+            log.error("Ошибка при получении списка файлов", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(new ErrorResponse("Error getting file list", 500));
+                    .body(new ErrorResponse("Ошибка при получении списка файлов", 500));
         }
     }
 
@@ -44,15 +55,19 @@ public class FileController {
             @RequestHeader("auth-token") String token,
             @RequestParam("filename") String filename,
             @RequestParam("file") MultipartFile file) {
+        log.info("Запрос на загрузку файла: {} (size: {} bytes)", filename, file.getSize());
         try {
             fileService.uploadFile(filename, file);
+            log.info("Файл {} успешно загружен", filename);
             return ResponseEntity.ok().build();
-        } catch (IOException e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(new ErrorResponse("File upload failed", 500));
-        } catch (RuntimeException e) {
+        } catch (FileAlreadyExistsException | EmptyFileException e) {
+            log.warn("Загрузка файла отклонена: {} - {}", filename, e.getMessage());
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(new ErrorResponse(e.getMessage(), 400));
+        } catch (IOException e) {
+            log.error("Не удалось загрузить файл: {}", filename, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(new ErrorResponse("Не удалось загрузить файл", 500));
         }
     }
 
@@ -60,16 +75,20 @@ public class FileController {
     public ResponseEntity<?> downloadFile(
             @RequestHeader("auth-token") String token,
             @RequestParam("filename") String filename) {
+        log.info("Запрос на загрузку файла: {}", filename);
         try {
             Resource resource = fileService.downloadFile(filename);
+            log.info("Файл {} успешно подготовлен для загрузки", filename);
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
                     .contentType(MediaType.APPLICATION_OCTET_STREAM)
                     .body(resource);
         } catch (IOException e) {
+            log.error("Не удалось загрузить файл: {}", filename, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(new ErrorResponse("File download failed", 500));
+                    .body(new ErrorResponse("Не удалось загрузить файл", 500));
         } catch (FileNotFoundException e) {
+            log.warn("Файл не найден для скачивания: {}", filename);
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(new ErrorResponse(e.getMessage(), 400));
         }
@@ -79,13 +98,17 @@ public class FileController {
     public ResponseEntity<?> deleteFile(
             @RequestHeader("auth-token") String token,
             @RequestParam("filename") String filename) {
+        log.info("Запрос на удаление файла: {}", filename);
         try {
             fileService.deleteFile(filename);
+            log.info("Файл {} успешно удален", filename);
             return ResponseEntity.ok().build();
         } catch (IOException e) {
+            log.error("Не удалось удалить файл: {}", filename, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(new ErrorResponse("File deletion failed", 500));
+                    .body(new ErrorResponse("Не удалось удалить файл", 500));
         } catch (FileNotFoundException e) {
+            log.warn("Не найден файл для удаления: {}", filename);
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(new ErrorResponse(e.getMessage(), 400));
         }
@@ -96,18 +119,19 @@ public class FileController {
             @RequestHeader("auth-token") String token,
             @RequestParam("filename") String filename,
             @RequestBody RenameFileRequest renameRequest) {
+        log.info("Запрос на переименование файла : {} -> {}", filename, renameRequest.getName());
         try {
             fileService.renameFile(filename, renameRequest.getName());
+            log.info("Файл {} успешно переименован на {}", filename, renameRequest.getName());
             return ResponseEntity.ok().build();
-        } catch (FileNotFoundException e) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(new ErrorResponse(e.getMessage(), 400));
-        } catch (RuntimeException e) {
+        } catch (FileNotFoundException | FileAlreadyExistsException e) {
+            log.warn("Ошибка переименования файла: {} - {}", filename, e.getMessage());
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(new ErrorResponse(e.getMessage(), 400));
         } catch (Exception e) {
+            log.error("Ошибка переименования файла: {}", filename, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(new ErrorResponse("Error renaming file", 500));
+                    .body(new ErrorResponse("Ошибка переименования файла", 500));
         }
     }
 }

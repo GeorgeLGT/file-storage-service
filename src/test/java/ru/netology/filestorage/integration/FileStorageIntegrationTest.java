@@ -1,5 +1,6 @@
 package ru.netology.filestorage.integration;
 
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -14,6 +15,7 @@ import ru.netology.filestorage.dto.AuthRequest;
 import ru.netology.filestorage.dto.AuthResponse;
 
 import static org.junit.jupiter.api.Assertions.*;
+
 
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)

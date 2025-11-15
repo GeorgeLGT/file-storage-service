@@ -11,7 +11,6 @@ public class AuthRequest {
         this.password = password;
     }
 
-
     public String getLogin() {
         return login;
     }
